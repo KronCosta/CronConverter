@@ -1,85 +1,121 @@
 package com.titkov.konstantin;
 
+
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.format.DateTimeParseException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class CronConverter implements DatesToCronConverterInterface {
+    public static final Map<Integer, String> WEEK_DAYS = new HashMap<>();
+    static {
+        WEEK_DAYS.put(0, "MON");
+        WEEK_DAYS.put(1, "MON");
+        WEEK_DAYS.put(2, "MON");
+        WEEK_DAYS.put(3, "MON");
+        WEEK_DAYS.put(4, "MON");
+        WEEK_DAYS.put(5, "MON");
+        WEEK_DAYS.put(6, "MON");
+
+    }
     private final DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
 
-    public CronConverter(List<String> dateList) {
+    public CronConverter() {
     }
 
     @Override
-    public String convert(List<String> dates) {
+    public String convert(List<String> dates) throws DatesToCronConvertException {
         List<LocalDateTime> dateTimes = new ArrayList<>();
-        Map<String, Integer> seconds = new HashMap<>(60);
-        Map<String, Integer> minutes = new HashMap<>(60);
-        Map<String, Integer> hours = new HashMap<>(24);
-        Map<String, Integer> dayOfMonth = new HashMap<>(31);
-        Map<String, Integer> dayOfWeek = new HashMap<>(7);
-
-
-        for (String date : dates) {
-            LocalDateTime localDateTime = LocalDateTime.parse(date, formatter);
-            dateTimes.add(localDateTime);
+        try {
+            for (String date : dates) {
+                dateTimes.add(LocalDateTime.parse(date, formatter));
+            }
+        } catch (DateTimeParseException e) {
+            throw new DatesToCronConvertException(e);
         }
-        for (int i = 0; i < dateTimes.size(); i++) {
-            if (i + 1 < dateTimes.size()) {
 
-                String day = String.valueOf(dateTimes.get(i).getDayOfMonth());
-                if (dayOfMonth.containsKey(day)) {
-                    dayOfMonth.put(day, dayOfMonth.get(day) + 1);
-                } else {
-                    dayOfMonth.put(day, 1);
-                }
+        List<Integer> mins = dateTimes.stream()
+                .map(Timestamp::valueOf)
+                .map( s -> (int) s.getTime() / 1_000)
+                .collect(Collectors.toList());
+        Optional<Integer> minStep = detectStep(mins);
 
+        Map<Integer, Integer> seconds = new HashMap<>();
+        Map<Integer, Integer> minutes = new HashMap<>();
+        Map<Integer, Integer> hours = new HashMap<>();
+        Map<Integer, Integer> dayOfMonth = new HashMap<>();
+        Map<Integer, Integer> dayOfWeek = new HashMap<>();
 
-                String sec = String.valueOf(dateTimes.get(i).getSecond());
-                if (seconds.containsKey(sec)) {
-                    seconds.put(sec, seconds.get(sec) + 1);
-                } else {
-                    seconds.put(sec, 1);
-                }
+        for (LocalDateTime dateTime : dateTimes) {
+            putCount(dayOfMonth, dateTime.getDayOfMonth());
+            putCount(seconds, dateTime.getSecond());
+            putCount(minutes, dateTime.getMinute());
+            putCount(hours, dateTime.getHour());
+            putCount(dayOfWeek, dateTime.getDayOfWeek().getValue());
+        }
 
+        StringBuilder stringBuilder = new StringBuilder();
+        if (minStep.isPresent() && minStep.get() == 60) {
+            stringBuilder.append("0 * * * ");
+        } else {
+            stringBuilder.append(getRule(seconds));
+            stringBuilder.append(" ");
+            stringBuilder.append(getRule(minutes));
+            stringBuilder.append(" ");
+            stringBuilder.append(getRule(hours));
+            stringBuilder.append(" ");
+            stringBuilder.append("*");
+            stringBuilder.append(" ");
+            stringBuilder.append("*");
+            stringBuilder.append(" ");
+        }
 
-                String min = String.valueOf(dateTimes.get(i).getMinute());
-                if (minutes.containsKey(min)) {
-                    minutes.put(min, minutes.get(min) + 1);
-                } else {
-                    minutes.put(min, 1);
-                }
+        if (dayOfWeek.size() == 1) {
+            stringBuilder.append(String.valueOf(dateTimes.get(0).getDayOfWeek()), 0, 3); // todo день недели
+        }
 
+        return stringBuilder.toString();
+    }
 
-                String hour = String.valueOf(dateTimes.get(i).getHour());
-                if (hours.containsKey(hour)) {
-                    hours.put(hour, hours.get(hour) + 1);
-                } else {
-                    hours.put(hour, 1);
-                }
+    private String getRule(Map<Integer, Integer> map) throws DatesToCronConvertException {
+        List<Integer> keys = map.keySet().stream()
+                .sorted()
+                .collect(Collectors.toList());
 
+        if (keys.size() == 1) {
+            return String.valueOf(keys.get(0));
+        }
 
-                String dayOW = String.valueOf(dateTimes.get(i).getDayOfWeek());
-                if (dayOfWeek.containsKey(dayOW)) {
-                    dayOfWeek.put(dayOW, dayOfWeek.get(dayOW) + 1);
-                } else {
-                    dayOfWeek.put(dayOW, 1);
-                }
+        Optional<Integer> r = detectStep(keys);
+
+        if (r.isPresent()) {
+            if (keys.get(0).equals(0)) {
+                return String.format("0/%d", r.get());
+            } else if (r.get() == 1) {
+                return String.format("%d-%d", keys.get(0), keys.get(keys.size()-1));
             }
         }
 
-        System.out.println(dayOfMonth);
-        System.out.println(seconds);
-        System.out.println(minutes);
-        System.out.println(hours);
-        System.out.println(dayOfWeek);
+        return "*";
+    }
 
-////TODO: вернуть cron удовлетворяющий 51% дат из списка
-        return null;
+    private Optional<Integer> detectStep(List<Integer> keys) {
+        int shift = keys.get(1) - keys.get(0);
+        for (int i = 2; i < keys.size(); i++) {
+            int currentShift = keys.get(i) - keys.get(i-1);
+            if (currentShift != shift) {
+                return Optional.empty();
+            }
+        }
+
+        return Optional.of(shift);
+    }
+
+    private void putCount(Map<Integer, Integer> dayOfMonth, int value) {
+        dayOfMonth.put(value, dayOfMonth.computeIfAbsent(value, k -> 0) + 1);
     }
 
     //TODO: добавить ссыдлку
@@ -88,27 +124,6 @@ public class CronConverter implements DatesToCronConverterInterface {
         return "Титков Константин Алексеевич \n"
                 + getClass().getSimpleName() + " \n"
                 + getClass().getPackage() + " \n"
-                + "HREF";
+                + "https://github.com/KronCosta/CronConverter";
     }
-
-//    private String cronBuilder(String date) {
-//        LocalDateTime localDateTime = LocalDateTime.parse(date, formatter);
-//        StringBuilder cron = new StringBuilder();
-//        int seconds = localDateTime.getSecond();
-//        int minutes = localDateTime.getMinute();
-//        int hour = localDateTime.getHour();
-//        int dayOfMonth = localDateTime.getDayOfMonth();
-//        String month = String.valueOf(localDateTime.getMonthValue());
-//        String dayOfWeek = String.valueOf(localDateTime.getDayOfWeek());
-//        cron.append(seconds).append(" ")
-//                .append(minutes).append(" ")
-//                .append(hour).append(" ")
-//                .append(dayOfMonth).append(" ")
-//                .append(month).append(" ")
-//                .append(dayOfWeek, 0, 3);
-//
-//        return cron.toString();
-//    }
-//
-
 }

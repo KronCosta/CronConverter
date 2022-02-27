@@ -2,14 +2,18 @@ package com.titkov.konstantin;
 
 public class DatesToCronConvertException extends Exception {
 
-     final String message = "\" doesn't have 5 or 6 segments as excepted\"";
+    String message;
+    Exception cause;
 
 
-
-
-    public DatesToCronConvertException() {
-
+    public DatesToCronConvertException(Exception e) {
+        this.cause = e;
     }
+
+    public DatesToCronConvertException(String e) {
+        this.message = e;
+    }
+
 
     @Override
     public String getMessage() {
